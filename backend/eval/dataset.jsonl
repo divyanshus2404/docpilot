@@ -1,0 +1,12 @@
+{"question": "How many days in advance should travel be booked?", "expected_source": "travel_policy.md", "expected_answer_contains": "7 days"}
+{"question": "What is the daily meal allowance for international trips?", "expected_source": "travel_policy.md", "expected_answer_contains": "60"}
+{"question": "What is the hotel cap per night in metro cities?", "expected_source": "travel_policy.md", "expected_answer_contains": "6,000"}
+{"question": "Within how many days must expense claims be submitted?", "expected_source": "travel_policy.md", "expected_answer_contains": "30 days"}
+{"question": "How much paid annual leave do full-time employees get?", "expected_source": "leave_policy.md", "expected_answer_contains": "24 days"}
+{"question": "When is a medical certificate needed for sick leave?", "expected_source": "leave_policy.md", "expected_answer_contains": "2 consecutive days"}
+{"question": "How much leave do interns earn?", "expected_source": "leave_policy.md", "expected_answer_contains": "1 day"}
+{"question": "How long is parental leave for secondary caregivers?", "expected_source": "leave_policy.md", "expected_answer_contains": "4 weeks"}
+{"question": "What is the minimum password length?", "expected_source": "it_security_policy.md", "expected_answer_contains": "14"}
+{"question": "Can I paste client data into a public AI chatbot?", "expected_source": "it_security_policy.md", "expected_answer_contains": "must not"}
+{"question": "How quickly must a lost laptop be reported?", "expected_source": "it_security_policy.md", "expected_answer_contains": "1 hour"}
+{"question": "After how many minutes must laptops auto-lock?", "expected_source": "it_security_policy.md", "expected_answer_contains": "5 minutes"}

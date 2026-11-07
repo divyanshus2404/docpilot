@@ -1,0 +1,25 @@
+# docker compose up --build          -> uses OpenAI (set OPENAI_API_KEY in backend/.env)
+# LLM_PROVIDER=ollama docker compose --profile local up --build   -> fully local with LLaMA
+services:
+  docpilot:
+    build: .
+    ports: ["8000:7860"]
+    env_file: [backend/.env]
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OLLAMA_BASE_URL: http://ollama:11434
+      CHROMA_DIR: /data/chroma
+    volumes:
+      - chroma:/data/chroma
+      - hf-cache:/root/.cache/huggingface
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local"]
+    ports: ["11434:11434"]
+    volumes: [ollama:/root/.ollama]
+
+volumes:
+  chroma:
+  hf-cache:
+  ollama:
