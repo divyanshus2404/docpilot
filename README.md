@@ -11,6 +11,8 @@ short_description: Agentic RAG over your documents (LangGraph + ChromaDB)
 
 # DocPilot: Agentic RAG over your documents
 
+[![CI](https://github.com/divyanshus2404/docpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/divyanshus2404/docpilot/actions/workflows/ci.yml)
+
 DocPilot answers questions **only from your own documents** (PDF, Markdown, text), cites its sources, remembers the conversation, and **declines instead of guessing** when the answer isn't there.
 
 It's a **corrective RAG agent built with LangGraph**. It doesn't just retrieve and answer: it checks whether what it retrieved is actually relevant, rewrites the search if it isn't, and only then answers.
