@@ -17,7 +17,7 @@ Status and numbers checked against the code and a local eval run on 2026-11-17. 
 | Key quality attribute | **Trustworthiness over fluency**: every answer is traceable to a source chunk, or it is not given. |
 | How is quality enforced? | An eval harness (hit@5, MRR, answer and citation accuracy) and 12 offline pytest tests run in GitHub Actions; the eval is a quality gate that fails the build below thresholds. |
 | How does it scale? | Interfaces around the LLM and the vector store today; medallion ingestion and an Azure target are designed (§6, §8). |
-| What's next? | Medallion ingestion with a data contract (ADR-002), harder eval set, GraphRAG (ADR-004), Azure (ADR-005). |
+| What's next? | Medallion ingestion with a data contract (ADR-002), harder eval set, Neo4j adapter for the graph (ADR-004), Azure (ADR-005). |
 
 ---
 
@@ -71,15 +71,13 @@ flowchart LR
 
     subgraph Retrieval
         V[(Vector store<br/>ChromaDB ✅)]
-        K[(Knowledge graph<br/>Neo4j ⬜)]
+        K[(Knowledge graph ✅<br/>JSON store · Neo4j adapter ⬜)]
     end
 
     subgraph Agent["Agent: LangGraph state graph ✅"]
-        C[condense follow-up<br/>into standalone question] --> RT{route ⬜}
-        RT --> R[retrieve]
-        RT -.multi-hop.-> GQ[graph query ⬜]
-        R --> GR[grade relevance]
-        GQ -.-> GR
+        C[condense follow-up<br/>into standalone question] --> R[retrieve]
+        R --> GQ[graph_expand ✅<br/>entities in question → 2 hops]
+        GQ --> GR[grade relevance<br/>chunk + graph path]
         GR -- relevant --> AN[answer + citations]
         GR -- weak, retries left --> RW[rewrite query]
         RW --> R
@@ -100,9 +98,10 @@ flowchart LR
     A2 -.-> B
     S -- contract violation --> Q
     G --> V
+    A1 -- "triples extracted per chunk ✅" --> K
     G -.-> K
     V --> R
-    K -.-> GQ
+    K --> GQ
     Agent <--> LLM
     UI --> API --> Agent
     API <--> MEM
@@ -219,12 +218,20 @@ Format: Context → Options → Decision → Consequences → Revisit when.
 - **Consequences:** Fewer hallucinations and every node can be inspected (each node appends to a `steps` trace streamed to the UI). Worst case is 19 LLM calls per question; mitigated by a small grader model and batched grading. Grade caching is not built yet.
 - **Evidence:** naive vs corrective on the same eval set → see §7.
 
-### ADR-004: Knowledge-graph layer (GraphRAG) ⬜
-- **Status:** Proposed
-- **Context:** Multi-hop questions ("which assets share supplier X and failed inspection Y?") fail with chunk-level search.
-- **Decision:** Extract entities/relations into Neo4j at Gold; a router sends multi-hop queries to graph traversal + vector hybrid.
-- **Consequences:** Enables multi-hop and aggregate questions. New risks: extraction cost and entity-resolution errors, so the graph needs its own eval set.
-- **Success metric:** multi-hop subset accuracy improves by ≥ 15 pts with no regression on single-hop.
+### ADR-004: Knowledge-graph layer (GraphRAG) ✅
+- **Status:** Accepted and implemented (`backend/app/kg.py`, `graph_expand` node).
+- **Context:** Multi-hop questions fail with chunk-level search. Example: "When was the supplier of the thrust bearing in gas turbine GT-7 last audited?" The audit record names only the supplier, so no embedding of the question lands near it.
+- **Options considered:**
+
+  | Option | + | − |
+  |---|---|---|
+  | Bigger top-k | No new component | More noise, still misses evidence with no shared words |
+  | Agentic multi-step retrieval (LLM decides next query) | Flexible | Several LLM round trips per question, harder to test |
+  | Knowledge graph built at ingestion | Deterministic traversal, testable, explainable paths | Extraction cost at ingest, entity-resolution errors |
+- **Decision:** At ingestion the LLM extracts `subject | relation | object` triples per chunk. At query time, entities named in the question seed a breadth-first walk of up to 2 hops; chunks mentioning the reached entities are added to the candidates, tagged with their path (e.g. `GT-7 → B-220 → Kessler Bearings GmbH`). The grader and the answer prompt both see that path. The graph runs **alongside** vector search (always on, no router), so single-hop answers can't regress.
+- **Storage:** in-process adjacency list persisted as JSON behind a `GraphStore` interface. Enough for a single node and fully offline in CI. **Revisit when:** the graph must be shared across replicas, exceeds ~100k entities, or needs ad-hoc Cypher queries → Neo4j adapter.
+- **Consequences:** One extra LLM call per chunk at ingestion. Question-side entity matching is exact, whole-word name matching: robust for part numbers (GT-7, B-220), weak for paraphrases ("the Riverside peaker"). Next step: LLM entity linking against known nodes.
+- **Evidence (§7):** multi-hop evidence recall 75% → 100% on 8 questions; single-hop metrics unchanged.
 
 ### ADR-005: Azure as the production target ⬜
 - **Status:** Proposed
@@ -236,16 +243,19 @@ Format: Context → Options → Decision → Consequences → Revisit when.
 
 ## 7. Evaluation (the quality gate)
 
-**Measured (local run, BGE-small-en-v1.5, sample corpus of 3 policy documents → 4 chunks, 12 questions):**
+**Measured (local run, BGE-small-en-v1.5; 3 policy documents + 10 plant records; 12 single-hop + 8 multi-hop questions):**
 
 | Metric | Result | What it actually shows |
 |---|---|---|
 | hit@5 | 100% | Not meaningful yet: with 4 chunks, top-5 returns the whole corpus |
 | MRR | 1.00 | Right document is ranked first for all 12 questions; a real but easy signal |
 | Answer / citation accuracy | not yet measured with a real LLM | CI runs the agent with a deterministic fake LLM to test the pipeline offline, not answer quality |
-| Unit + API tests | 12/12 pass | Offline, no API keys |
+| Unit + API tests | 21/21 pass | Offline, no API keys; includes 7 knowledge-graph tests |
+| Multi-hop evidence recall, vector only | 75% (6/8) | Same with hashing and BGE-small embeddings |
+| Multi-hop evidence recall, vector + graph | **100% (8/8)** | Gated in CI at ≥ 80% |
+| Multi-hop answer accuracy | not meaningful offline | The fake LLM can't chain facts; measure with a real model |
 
-**Quality gate ✅:** `run_eval.py` checks every metric against a minimum (`--min-hit 0.90`, `--min-mrr 0.80`, `--min-answer 0.90`, `--min-citation 0.95`) and exits with code 1 if any falls short, so the CI step fails and the merge is blocked. Verified both ways: default thresholds pass; raising `--min-answer` to 0.99 fails the run.
+**Quality gate ✅:** `run_eval.py` checks every metric against a minimum (`--min-hit 0.90`, `--min-mrr 0.80`, `--min-answer 0.90`, `--min-citation 0.95`, `--min-multihop 0.80`) and exits with code 1 if any falls short, so the CI step fails and the merge is blocked. Verified both ways: default thresholds pass; raising `--min-answer` to 0.99 fails the run.
 
 **Planned eval (MVP exit criterion):**
 
@@ -269,7 +279,7 @@ Format: Context → Options → Decision → Consequences → Revisit when.
 |---|---|---|---|
 | **PoC** ✅ | Working corrective agent end to end | Local, Docker Compose, sample corpus, offline CI | Done: agent, streaming UI, eval harness, 12 tests green |
 | **MVP** ⬜ | Usable by one team, provably better than naive | Real corpus + eval set (§7), CI gate ✅, medallion ingestion + contract, persistent checkpoints, Azure OpenAI, auth, structured logs | §7 shows corrective beats naive; gate blocks regressions; p95 within target |
-| **Production** ⬜ | Multi-team, governed | Azure AI Search, per-document RBAC, PII redaction, OpenTelemetry tracing, cost dashboards, GraphRAG | SLOs monitored; access audit passes; runbook + owner on call |
+| **Production** ⬜ | Multi-team, governed | Azure AI Search, per-document RBAC, PII redaction, OpenTelemetry tracing, cost dashboards, Neo4j graph adapter | SLOs monitored; access audit passes; runbook + owner on call |
 
 ---
 

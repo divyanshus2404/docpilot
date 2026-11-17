@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 
 from .config import get_settings
 from .graph import get_graph, turn_input
+from .kg import get_kg
 from .ingest import SUPPORTED, ingest_dir, ingest_file
 from .vectorstore import delete_source, list_sources
 
@@ -81,6 +82,7 @@ def health():
         "llm_model": model,
         "uploads_enabled": settings.allow_uploads,
         "embedding_model": settings.embedding_model if settings.embeddings_provider == "hf" else "hashing (offline)",
+        "knowledge_graph": get_kg().stats() if settings.graph_enabled else None,
     }
 
 

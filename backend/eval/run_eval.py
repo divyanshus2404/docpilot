@@ -3,7 +3,10 @@
 Retrieval metrics (no LLM needed):
   hit@k  - share of questions whose expected document appears in the top-k chunks
   MRR    - mean reciprocal rank of the first chunk from the expected document
-End-to-end metrics (runs the full LangGraph agent):
+Multi-hop rows ("type": "multihop") measure whether retrieval reaches the evidence at all,
+with vector search alone and with vector search + the knowledge graph. Their answer accuracy is
+reported but not gated, because the offline fake LLM used in CI cannot chain facts.
+End-to-end metrics (runs the full LangGraph agent, single-hop rows):
   answer accuracy - answer contains the expected key fact
   citation accuracy - at least one citation points at the expected document
 
@@ -22,6 +25,8 @@ import uuid
 from pathlib import Path
 
 from app.graph import get_graph, turn_input
+from app.config import get_settings
+from app.kg import graph_chunks
 from app.vectorstore import search
 
 DATASET = Path(__file__).with_name("dataset.jsonl")
@@ -35,37 +40,59 @@ def main() -> None:
     parser.add_argument("--min-mrr", type=float, default=0.80, help="minimum MRR (0-1)")
     parser.add_argument("--min-answer", type=float, default=0.90, help="minimum answer accuracy (0-1)")
     parser.add_argument("--min-citation", type=float, default=0.95, help="minimum citation accuracy (0-1)")
+    parser.add_argument("--min-multihop", type=float, default=0.80, help="minimum multi-hop evidence recall with the graph (0-1)")
     args = parser.parse_args()
 
     rows = [json.loads(line) for line in DATASET.read_text().splitlines() if line.strip()]
-    hits, rr, correct, cited_right = 0, 0.0, 0, 0
+    single = [r for r in rows if r.get("type", "single") == "single"]
+    multi = [r for r in rows if r.get("type") == "multihop"]
 
-    for row in rows:
+    # ---- single-hop: retrieval + end-to-end answers (gated) ----------------------------
+    hits, rr, correct, cited_right = 0, 0.0, 0, 0
+    for row in single:
         sources = [d.metadata.get("source") for d, _ in search(row["question"], k=args.k)]
         if row["expected_source"] in sources:
             hits += 1
             rr += 1 / (sources.index(row["expected_source"]) + 1)
-
         if not args.no_agent:
-            out = get_graph().invoke(turn_input(row["question"]), {"configurable": {"thread_id": str(uuid.uuid4())}})
-            ok = row["expected_answer_contains"].lower() in out["answer"].lower()
-            cit = any(c["source"] == row["expected_source"] for c in out.get("citations", []))
+            ok, cit = run_agent(row)
             correct += ok
             cited_right += cit
-            print(f"{'PASS' if ok and cit else 'FAIL'} | {row['question']}\n       -> {out['answer']}")
 
-    n = len(rows)
-    print("\n=== Results ===")
+    # ---- multi-hop: does retrieval reach the evidence, with and without the graph? -----
+    vec_hits, graph_hits, m_correct, m_cited = 0, 0, 0, 0
+    for row in multi:
+        vec = {d.metadata.get("source") for d, _ in search(row["question"], k=args.k)}
+        via_graph = {c["source"] for c in graph_chunks(row["question"])[0]} if get_settings().graph_enabled else set()
+        vec_hits += row["expected_source"] in vec
+        graph_hits += row["expected_source"] in vec | via_graph
+        if not args.no_agent:
+            ok, cit = run_agent(row)
+            m_correct += ok
+            m_cited += cit
+
+    n, m = len(single), len(multi)
+    print("\n=== Results: single-hop ===")
     print(f"questions:          {n}")
     print(f"hit@{args.k}:             {hits / n:.0%}")
     print(f"MRR:                {rr / n:.2f}")
     if not args.no_agent:
         print(f"answer accuracy:    {correct / n:.0%}")
         print(f"citation accuracy:  {cited_right / n:.0%}")
+    if m:
+        print("\n=== Results: multi-hop ===")
+        print(f"questions:                     {m}")
+        print(f"evidence recall, vector only:  {vec_hits / m:.0%}")
+        print(f"evidence recall, vector+graph: {graph_hits / m:.0%}")
+        if not args.no_agent:
+            print(f"answer accuracy (report only): {m_correct / m:.0%}")
+            print(f"citation accuracy (report only): {m_cited / m:.0%}")
 
     checks = [(f"hit@{args.k}", hits / n, args.min_hit), ("MRR", rr / n, args.min_mrr)]
     if not args.no_agent:
         checks += [("answer accuracy", correct / n, args.min_answer), ("citation accuracy", cited_right / n, args.min_citation)]
+    if m and get_settings().graph_enabled:
+        checks.append(("multi-hop evidence recall (graph)", graph_hits / m, args.min_multihop))
     failed = [(name, val, floor) for name, val, floor in checks if val < floor]
 
     print("\n=== Quality gate ===")
@@ -75,6 +102,14 @@ def main() -> None:
         print(f"\nQuality gate FAILED on {len(failed)} metric(s).")
         sys.exit(1)
     print("\nQuality gate passed.")
+
+
+def run_agent(row: dict) -> tuple[bool, bool]:
+    out = get_graph().invoke(turn_input(row["question"]), {"configurable": {"thread_id": str(uuid.uuid4())}})
+    ok = row["expected_answer_contains"].lower() in out["answer"].lower()
+    cit = any(c["source"] == row["expected_source"] for c in out.get("citations", []))
+    print(f"{'PASS' if ok and cit else 'FAIL'} | {row['question']}\n       -> {out['answer'][:200]}")
+    return ok, cit
 
 
 if __name__ == "__main__":

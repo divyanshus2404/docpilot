@@ -1,6 +1,6 @@
 """The DocPilot agent, built as a LangGraph state machine (corrective / self-checking RAG).
 
-    START -> condense -> retrieve -> grade --(relevant chunks found)--> generate -> END
+    START -> condense -> retrieve -> graph_expand -> grade --(relevant chunks found)--> generate -> END
                             ^          |
                             |          +--(nothing relevant, retries left)--> rewrite --+
                             |                                                           |
@@ -10,6 +10,7 @@
 
 * condense  - turns a follow-up ("what about interns?") into a standalone question using chat memory
 * retrieve  - vector search in ChromaDB (BGE embeddings)
+* graph_expand - follows the knowledge graph from entities named in the question (GraphRAG)
 * grade     - the LLM checks each retrieved chunk for relevance and drops the noise
 * rewrite   - if nothing survived grading, the LLM rewrites the search query and we try again
 * generate  - answers only from the relevant chunks, with [n] citations
@@ -35,11 +36,12 @@ from .providers import get_llm
 from .vectorstore import search
 
 
-class Chunk(TypedDict):
+class Chunk(TypedDict, total=False):
     content: str
     source: str
     page: int | None
     score: float
+    via: str  # set when the chunk was reached through the knowledge graph
 
 
 class AgentState(TypedDict, total=False):
@@ -100,6 +102,25 @@ def retrieve(state: AgentState) -> AgentState:
     return {"documents": docs, "steps": _step(state, f"Retrieved {len(docs)} chunks for “{state['query']}”")}
 
 
+def graph_expand(state: AgentState) -> AgentState:
+    """Add chunks reached through the knowledge graph from entities named in the question."""
+    from .kg import graph_chunks
+
+    found, seeds = graph_chunks(state["question"])
+    seen = {d["content"] for d in state.get("documents", [])}
+    extra = [c for c in found if c["content"] not in seen]
+    if not seeds:
+        return {"steps": _step(state, "Graph: no known entities in the question")}
+    return {
+        "documents": [*state.get("documents", []), *extra],
+        "steps": _step(state, f"Graph: matched {', '.join(seeds[:3])}; added {len(extra)} linked chunks"),
+    }
+
+
+def _with_path(d: Chunk) -> str:
+    return f"(reached via: {d['via']})\n{d['content']}" if d.get("via") else d["content"]
+
+
 def grade(state: AgentState) -> AgentState:
     docs = state.get("documents", [])
     if not docs:
@@ -108,7 +129,7 @@ def grade(state: AgentState) -> AgentState:
     batches = [
         [
             SystemMessage(prompts.GRADE_SYSTEM),
-            HumanMessage(prompts.GRADE_USER.format(question=state["question"], document=d["content"])),
+            HumanMessage(prompts.GRADE_USER.format(question=state["question"], document=_with_path(d))),
         ]
         for d in docs
     ]
@@ -131,7 +152,7 @@ def rewrite(state: AgentState) -> AgentState:
 def generate(state: AgentState) -> AgentState:
     chunks = state["relevant"]
     context = "\n\n".join(
-        f"[{i}] (source: {c['source']}, page {c['page']})\n{c['content']}" for i, c in enumerate(chunks, 1)
+        f"[{i}] (source: {c['source']}, page {c['page']})\n{_with_path(c)}" for i, c in enumerate(chunks, 1)
     )
     answer = get_llm().invoke(
         [
@@ -184,7 +205,12 @@ def build_graph(checkpointer=None):
 
     g.add_edge(START, "condense")
     g.add_edge("condense", "retrieve")
-    g.add_edge("retrieve", "grade")
+    if get_settings().graph_enabled:
+        g.add_node("graph_expand", graph_expand)
+        g.add_edge("retrieve", "graph_expand")
+        g.add_edge("graph_expand", "grade")
+    else:
+        g.add_edge("retrieve", "grade")
     g.add_conditional_edges("grade", route_after_grade)
     g.add_edge("rewrite", "retrieve")
     g.add_edge("generate", END)

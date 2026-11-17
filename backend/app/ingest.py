@@ -57,6 +57,10 @@ def ingest_file(path: Path, source_name: str | None = None, replace: bool = True
     if not chunks:
         return 0
     get_vectorstore().add_documents(chunks, ids=[c.metadata["chunk_id"] for c in chunks])
+    if get_settings().graph_enabled:
+        from .kg import index_chunks
+
+        index_chunks(chunks)
     return len(chunks)
 
 
