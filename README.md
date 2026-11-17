@@ -162,3 +162,7 @@ Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 - LLM-as-judge faithfulness scoring in the eval
 - Databricks Mosaic AI Vector Search as an alternative vector store
 - Auth and per-user collections
+
+## Architecture
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design, decision records, data contract and path to production.

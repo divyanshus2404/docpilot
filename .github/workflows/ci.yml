@@ -22,7 +22,7 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Unit + API tests (offline, no API keys)
         run: pytest -q
-      - name: Retrieval + answer evaluation
+      - name: Eval quality gate (fails the build below thresholds)
         run: |
           export CHROMA_DIR=$(mktemp -d)
           python -m app.ingest data/sample_docs
