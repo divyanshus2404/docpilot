@@ -17,7 +17,7 @@ def ask(question: str, thread_id: str | None = None) -> dict:
 
 
 def test_ingestion_creates_chunks(ingested):
-    assert set(ingested) == {"travel_policy.md", "leave_policy.md", "it_security_policy.md"}
+    assert {"travel_policy.md", "leave_policy.md", "it_security_policy.md", "kessler_bearings.md"} <= set(ingested)
     assert all(n > 0 for n in ingested.values())
 
 

@@ -27,7 +27,8 @@ It's a **corrective RAG agent built with LangGraph**. It doesn't just retrieve a
 flowchart LR
     S([Question]) --> C[condense<br/>follow-up → standalone]
     C --> R[retrieve<br/>ChromaDB + BGE]
-    R --> G{grade<br/>LLM checks each chunk}
+    R --> X[graph_expand<br/>knowledge graph, 2 hops]
+    X --> G{grade<br/>LLM checks each chunk}
     G -- relevant chunks --> A[generate<br/>answer with citations]
     G -- nothing relevant,<br/>retries left --> W[rewrite query]
     W --> R
@@ -40,6 +41,7 @@ flowchart LR
 |---|---|
 | `condense` | Uses chat memory to turn “and for interns?” into a standalone question |
 | `retrieve` | Cosine search over BGE embeddings in ChromaDB (top-k) |
+| `graph_expand` | Finds entities named in the question (e.g. `GT-7`) in the knowledge graph, walks up to 2 hops and adds the chunks it reaches, tagged with the path |
 | `grade` | The LLM grades every chunk for relevance (in parallel) and drops noise |
 | `rewrite` | If nothing passed, the LLM rewrites the query with better keywords (max 2 tries) |
 | `generate` | Answers strictly from the graded chunks, citing each claim as `[n]` |
@@ -52,6 +54,7 @@ Conversation memory is stored per `thread_id` with a LangGraph checkpointer.
 - **Swappable LLMs:** `LLM_PROVIDER=openai` (GPT via the OpenAI SDK), `groq` (LLaMA hosted on Groq) or `ollama` (LLaMA running locally). No code changes.
 - **Local embeddings:** `BAAI/bge-small-en-v1.5` by default, with the BGE query instruction applied correctly. You can switch to `thenlper/gte-large` or `bge-large` with one env var.
 - **Duplicate-safe ingestion:** chunk IDs are content hashes, and re-uploading a file replaces its old chunks.
+- **GraphRAG:** at ingestion the LLM extracts entity–relation triples into a knowledge graph; at question time the agent follows it to answer multi-hop questions that vector search alone misses.
 - **Streaming API:** Server-Sent Events stream the agent's steps live, then the answer tokens.
 - **Explainable UI:** each answer shows the agent trace (retrieved → graded → rewritten → answered) and clickable citations that open the exact source chunk.
 - **Offline test mode:** a fake LLM and hashing embeddings let tests and evaluation run in CI with no API key or model download.
@@ -113,7 +116,7 @@ The sample policies are indexed automatically on first start.
 
 ```bash
 cd backend
-pytest -q                                   # 12 offline tests: ingestion, retrieval, agent routing, memory, API, streaming
+pytest -q                                   # 21 offline tests: ingestion, retrieval, knowledge graph, agent routing, memory, API, streaming
 python -m eval.run_eval                     # hit@k, MRR, answer + citation accuracy
 python -m eval.run_eval --no-agent          # retrieval-only metrics
 ```
@@ -127,6 +130,15 @@ Offline baseline on the sample set (hashing embeddings + rule-based fake LLM, ru
 | Answer accuracy | 92% |
 | Citation accuracy | 100% |
 
+**Multi-hop (GraphRAG).** `data/sample_docs/plant/` holds fictional turbine, component and supplier records. Supplier records never mention the turbines, so a question like *"When was the supplier of the thrust bearing in gas turbine GT-7 last audited?"* needs the chain GT-7 → B-220 bearing → Kessler Bearings GmbH → audit record.
+
+| Multi-hop evidence recall (8 questions, top-5) | Hashing (CI) | BGE-small |
+|---|---|---|
+| Vector search only | 75% | 75% |
+| Vector search + knowledge graph | **100%** | **100%** |
+
+CI fails if multi-hop recall with the graph drops below 80%. Multi-hop *answer* accuracy is printed but not gated: the offline fake LLM can't chain facts, so that number only means something with a real model.
+
 Run the same script with `LLM_PROVIDER=openai EMBEDDINGS_PROVIDER=hf` to measure the real models.
 
 ## Project structure
@@ -139,12 +151,13 @@ backend/
     vectorstore.py   ChromaDB wrapper (cosine), search, list, delete
     ingest.py        load → split → embed → upsert (CLI too)
     prompts.py       all prompts in one place
-    graph.py         LangGraph agent: condense → retrieve → grade → rewrite/generate/not_found
+    kg.py            knowledge graph: triple extraction, JSON graph store, multi-hop traversal
+    graph.py         LangGraph agent: condense → retrieve → graph_expand → grade → rewrite/generate/not_found
     main.py          FastAPI app + SSE streaming
     fakes.py         offline LLM + embeddings for tests/CI
   eval/              labelled dataset + metrics script
   tests/             pytest suite
-  data/sample_docs/  demo policies (fictional company)
+  data/sample_docs/  demo policies + plant/ asset, component and supplier records (all fictional)
 frontend/            React + TypeScript (Vite) chat UI
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 ```
@@ -154,6 +167,7 @@ Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 - **Why grade chunks?** Plain RAG passes whatever the vector search returns to the LLM, including irrelevant chunks, which leads to confident wrong answers. Grading filters them out, and the rewrite loop recovers when the user's wording doesn't match the documents.
 - **Why LangGraph rather than a single chain?** The flow has loops (rewrite → retrieve) and branches (answer vs decline). A state graph makes those explicit, testable (`route_after_grade` is unit-tested) and easy to extend.
 - **Why BGE?** It's a strong open-source embedding model that runs on CPU, so documents never leave the machine. Queries get the BGE instruction prefix and documents don't, as the model was trained.
+- **Why a knowledge graph?** Vector search finds chunks that *look like* the question. Multi-hop questions need evidence that doesn't: the supplier's audit record shares no words with "turbine GT-7". The graph links them through the entities in between. It's stored in-process as JSON behind a `GraphStore` interface; a Neo4j adapter can replace it when the graph has to be shared or grow large.
 - **Why cosine in Chroma?** BGE/GTE vectors are normalised, so cosine is the right metric, and the API reports scores as similarity (0–1).
 
 ## Roadmap
@@ -162,6 +176,7 @@ Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 - LLM-as-judge faithfulness scoring in the eval
 - Databricks Mosaic AI Vector Search as an alternative vector store
 - Auth and per-user collections
+- Neo4j `GraphStore` adapter and LLM-based entity linking in questions (today: exact name match)
 
 ## Architecture
 

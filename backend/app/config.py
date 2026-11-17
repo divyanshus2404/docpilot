@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     top_k: int = 5
     max_rewrites: int = 2
 
+    # --- Knowledge graph (GraphRAG) ---------------------------------------
+    # Extracts entity/relation triples at ingestion (one LLM call per chunk) and adds chunks
+    # reached through the graph to retrieval, for multi-hop questions.
+    graph_enabled: bool = True
+    graph_hops: int = 2
+    graph_max_chunks: int = 4
+    graph_path: str = ""  # default: <chroma_dir>/graph.json
+
     # --- API -------------------------------------------------------------
     cors_origins: str = "http://localhost:5173"
     allow_uploads: bool = True

@@ -40,6 +40,9 @@ def list_sources() -> list[dict]:
 
 
 def delete_source(source: str) -> int:
+    from .kg import get_kg  # local import: kg is optional and must not load at import time
+
+    get_kg().remove_source(source)
     vs = get_vectorstore()
     ids = vs.get(where={"source": source})["ids"]
     if ids:

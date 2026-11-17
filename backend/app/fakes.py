@@ -57,6 +57,37 @@ class HashingEmbeddings(Embeddings):
         return self._embed(text)
 
 
+_CODE = re.compile(r"\b[A-Z]{1,4}-\d+[A-Z]?\b")  # part / asset numbers: GT-7, B-220
+_NAME = re.compile(r"\b(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}|GmbH|Ltd|Co|Inc|AG))+\b")
+_SINGLE = re.compile(r"(?<=[a-z] )[A-Z][a-z]{3,}\b")
+_LEADING = {"The", "A", "An", "All", "Each", "Every", "This", "Our", "Its", "For", "If", "When"}
+
+
+def fake_entities(sentence: str) -> list[str]:
+    """Part numbers plus multi-word capitalised names (a crude stand-in for an LLM)."""
+    found = _CODE.findall(sentence)
+    for m in _NAME.findall(sentence):
+        words = m.split()
+        while words and words[0] in _LEADING:
+            words = words[1:]
+        if len(words) >= 2:
+            found.append(" ".join(words))
+    # Single capitalised words mid-sentence are usually places or names ("based in Leeds").
+    for w in _SINGLE.findall(sentence):
+        if not any(w in f for f in found):
+            found.append(w)
+    return list(dict.fromkeys(found))
+
+
+def fake_triples(text: str) -> list[tuple[str, str]]:
+    """Link every pair of entities that appear in the same sentence."""
+    pairs = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        ents = fake_entities(sentence)
+        pairs += [(a, b) for i, a in enumerate(ents) for b in ents[i + 1 :]]
+    return pairs
+
+
 def _section(text: str, name: str) -> str:
     m = re.search(rf"<{name}>(.*?)</{name}>", text, re.S)
     return m.group(1).strip() if m else ""
@@ -84,6 +115,8 @@ class FakeRAGChatModel(BaseChatModel):
         if "TASK: REWRITE" in system:
             q = _section(user, "question")
             return " ".join(tokens(q)) or q
+        if "TASK: EXTRACT" in system:
+            return "\n".join(f"{a} | mentioned with | {b}" for a, b in fake_triples(_section(user, "chunk")))
         if "TASK: ANSWER" in system:
             q = set(tokens(_section(user, "question")))
             context = _section(user, "context")

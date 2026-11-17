@@ -40,6 +40,17 @@ ANSWER_USER = """<context>
 </context>
 <question>{question}</question>"""
 
+EXTRACT_SYSTEM = """TASK: EXTRACT
+Extract a knowledge graph from the text. Entities are specific named things: equipment, assets,
+components, part numbers, organisations, sites, people, documents, standards. Skip generic nouns.
+Output one relation per line as: subject | relation | object
+Use short lower-case relations (e.g. uses, supplied by, located at, audited on).
+Use each entity's full name exactly as written. Output at most 15 lines and nothing else."""
+
+EXTRACT_USER = """<chunk>
+{chunk}
+</chunk>"""
+
 NOT_FOUND = (
     "I couldn't find this in the uploaded documents. Try rephrasing, or upload the document "
     "that covers it."

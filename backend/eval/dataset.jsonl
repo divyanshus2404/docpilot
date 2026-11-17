@@ -10,3 +10,11 @@
 {"question": "Can I paste client data into a public AI chatbot?", "expected_source": "it_security_policy.md", "expected_answer_contains": "must not"}
 {"question": "How quickly must a lost laptop be reported?", "expected_source": "it_security_policy.md", "expected_answer_contains": "1 hour"}
 {"question": "After how many minutes must laptops auto-lock?", "expected_source": "it_security_policy.md", "expected_answer_contains": "5 minutes"}
+{"type": "multihop", "question": "When was the supplier of the thrust bearing in gas turbine GT-7 last audited?", "expected_source": "kessler_bearings.md", "expected_answer_contains": "12 March 2026"}
+{"type": "multihop", "question": "When was the supplier of the shaft seal in gas turbine GT-9 last audited?", "expected_source": "marlow_sealing.md", "expected_answer_contains": "8 September 2025"}
+{"type": "multihop", "question": "What is the standard lead time of the bearing supplier for GT-9?", "expected_source": "arden_precision.md", "expected_answer_contains": "14 weeks"}
+{"type": "multihop", "question": "What audit rating did the shaft seal supplier for steam turbine ST-3 get?", "expected_source": "vortex_seals.md", "expected_answer_contains": "rating of A"}
+{"type": "multihop", "question": "Where is the supplier of the journal bearing in ST-3 based?", "expected_source": "kessler_bearings.md", "expected_answer_contains": "Schweinfurt"}
+{"type": "multihop", "question": "When was the shaft seal supplier for GT-7 last audited?", "expected_source": "vortex_seals.md", "expected_answer_contains": "20 January 2026"}
+{"type": "multihop", "question": "Which city is the thrust bearing supplier for gas turbine GT-9 based in?", "expected_source": "arden_precision.md", "expected_answer_contains": "Sheffield"}
+{"type": "multihop", "question": "What is the lead time of the seal supplier used by GT-9?", "expected_source": "marlow_sealing.md", "expected_answer_contains": "8 weeks"}
